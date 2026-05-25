@@ -800,6 +800,7 @@ describe("handleWebhook - interactive payloads", () => {
       botToken: "xoxb-test-token",
       signingSecret: secret,
       logger: mockLogger,
+      botUserId: "U_BOT",
     });
     await adapter.initialize(chatInstance);
 
@@ -1568,6 +1569,8 @@ function createMockChatInstance(state: StateAdapter): ChatInstance {
     processReaction: vi.fn(),
     processAction: vi.fn(),
     processOptionsLoad: vi.fn().mockResolvedValue(undefined),
+    processMessageUpdated: vi.fn(),
+    processMessageDeleted: vi.fn(),
     processModalSubmit: vi.fn().mockResolvedValue(undefined),
     processModalClose: vi.fn(),
     processSlashCommand: vi.fn(),
@@ -3223,7 +3226,7 @@ describe("message subtype handling", () => {
     );
   });
 
-  it("ignores message_changed subtypes", async () => {
+  it("dispatches message_changed subtypes as message updates", async () => {
     const state = createMockState();
     const chatInstance = createMockChatInstance(state);
     const adapter = createSlackAdapter({
@@ -3241,16 +3244,134 @@ describe("message subtype handling", () => {
         type: "message",
         subtype: "message_changed",
         channel: "C_CHAN",
-        ts: "1234567890.111111",
+        ts: "1234567891.111111",
+        message: {
+          type: "message",
+          user: "U_USER",
+          channel: "C_CHAN",
+          text: "edited text",
+          ts: "1234567890.111111",
+          edited: { ts: "1234567891.111111" },
+        },
       },
     });
     const request = createWebhookRequest(body, secret);
     await adapter.handleWebhook(request);
 
     expect(chatInstance.processMessage).not.toHaveBeenCalled();
+    expect(chatInstance.processMessageUpdated).toHaveBeenCalledWith(
+      adapter,
+      "slack:C_CHAN:1234567890.111111",
+      expect.any(Function),
+      undefined
+    );
   });
 
-  it("ignores message_deleted subtypes", async () => {
+  it("dispatches hidden message_changed edits as message updates", async () => {
+    const state = createMockState();
+    const chatInstance = createMockChatInstance(state);
+    const adapter = createSlackAdapter({
+      botToken: "xoxb-test-token",
+      signingSecret: secret,
+      logger: mockLogger,
+      botUserId: "U_BOT",
+    });
+    await adapter.initialize(chatInstance);
+
+    const body = JSON.stringify({
+      type: "event_callback",
+      team_id: "T123",
+      event: {
+        type: "message",
+        subtype: "message_changed",
+        hidden: true,
+        channel: "D_DM",
+        channel_type: "im",
+        ts: "1779425554.000100",
+        event_ts: "1779425554.000100",
+        message: {
+          type: "message",
+          user: "U_USER",
+          text: "What do you see in this attachment? Test",
+          ts: "1779271807.493869",
+          thread_ts: "1779271794.544339",
+          edited: { user: "U_USER", ts: "1779425554.000000" },
+        },
+        previous_message: {
+          type: "message",
+          user: "U_USER",
+          text: "What do you see in this attachment?",
+          ts: "1779271807.493869",
+          thread_ts: "1779271794.544339",
+        },
+      },
+    });
+    const request = createWebhookRequest(body, secret);
+    await adapter.handleWebhook(request);
+
+    expect(chatInstance.processMessage).not.toHaveBeenCalled();
+    expect(chatInstance.processMessageUpdated).toHaveBeenCalledWith(
+      adapter,
+      "slack:D_DM:1779271794.544339",
+      expect.any(Function),
+      undefined
+    );
+  });
+
+  it("ignores hidden message_changed thread metadata updates after deletes", async () => {
+    const state = createMockState();
+    const chatInstance = createMockChatInstance(state);
+    const adapter = createSlackAdapter({
+      botToken: "xoxb-test-token",
+      signingSecret: secret,
+      logger: mockLogger,
+      botUserId: "U_BOT",
+    });
+    await adapter.initialize(chatInstance);
+
+    const body = JSON.stringify({
+      type: "event_callback",
+      team_id: "T123",
+      event: {
+        type: "message",
+        subtype: "message_changed",
+        hidden: true,
+        channel: "D_DM",
+        channel_type: "im",
+        ts: "1779425682.000300",
+        event_ts: "1779425682.000300",
+        message: {
+          type: "message",
+          subtype: "assistant_app_thread",
+          user: "U_BOT",
+          text: "New Assistant Thread",
+          ts: "1778127887.294739",
+          thread_ts: "1778127887.294739",
+          edited: { user: "U_BOT", ts: "1778128187.000000" },
+          reply_count: 41,
+          latest_reply: "1779271265.010909",
+        },
+        previous_message: {
+          type: "message",
+          subtype: "assistant_app_thread",
+          user: "U_BOT",
+          text: "New Assistant Thread",
+          ts: "1778127887.294739",
+          thread_ts: "1778127887.294739",
+          edited: { user: "U_BOT", ts: "1778128187.000000" },
+          reply_count: 41,
+          latest_reply: "1779271265.010909",
+        },
+      },
+    });
+    const request = createWebhookRequest(body, secret);
+    await adapter.handleWebhook(request);
+
+    expect(chatInstance.processMessage).not.toHaveBeenCalled();
+    expect(chatInstance.processMessageUpdated).not.toHaveBeenCalled();
+  });
+
+  it("dispatches message_deleted subtypes as message deletes", async () => {
     const state = createMockState();
     const chatInstance = createMockChatInstance(state);
     const adapter = createSlackAdapter({
@@ -3268,13 +3389,87 @@ describe("message subtype handling", () => {
         type: "message",
         subtype: "message_deleted",
         channel: "C_CHAN",
-        ts: "1234567890.111111",
+        deleted_ts: "1234567890.111111",
+        event_ts: "1234567891.111111",
+        previous_message: {
+          type: "message",
+          user: "U_USER",
+          channel: "C_CHAN",
+          text: "deleted text",
+          ts: "1234567890.111111",
+        },
       },
     });
     const request = createWebhookRequest(body, secret);
     await adapter.handleWebhook(request);
 
     expect(chatInstance.processMessage).not.toHaveBeenCalled();
+    expect(chatInstance.processMessageDeleted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        adapter,
+        channelId: "C_CHAN",
+        messageId: "1234567890.111111",
+        threadId: "slack:C_CHAN:1234567890.111111",
+      }),
+      undefined
+    );
+  });
+
+  it("dispatches message_changed tombstone subtypes as message deletes", async () => {
+    const state = createMockState();
+    const chatInstance = createMockChatInstance(state);
+    const adapter = createSlackAdapter({
+      botToken: "xoxb-test-token",
+      signingSecret: secret,
+      logger: mockLogger,
+      botUserId: "U_BOT",
+    });
+    await adapter.initialize(chatInstance);
+
+    const body = JSON.stringify({
+      type: "event_callback",
+      team_id: "T123",
+      event: {
+        type: "message",
+        subtype: "message_changed",
+        channel: "C_CHAN",
+        channel_type: "channel",
+        hidden: true,
+        ts: "1779426065.000200",
+        event_ts: "1779426065.000200",
+        message: {
+          type: "message",
+          subtype: "tombstone",
+          user: "USLACKBOT",
+          text: "This message was deleted.",
+          hidden: true,
+          ts: "1778050260.824689",
+          thread_ts: "1778050260.824689",
+        },
+        previous_message: {
+          type: "message",
+          user: "U_USER",
+          channel: "C_CHAN",
+          text: "<@U_BOT> deleted message",
+          ts: "1778050260.824689",
+          thread_ts: "1778050260.824689",
+        },
+      },
+    });
+    const request = createWebhookRequest(body, secret);
+    await adapter.handleWebhook(request);
+
+    expect(chatInstance.processMessage).not.toHaveBeenCalled();
+    expect(chatInstance.processMessageUpdated).not.toHaveBeenCalled();
+    expect(chatInstance.processMessageDeleted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        adapter,
+        channelId: "C_CHAN",
+        messageId: "1778050260.824689",
+        threadId: "slack:C_CHAN:1778050260.824689",
+      }),
+      undefined
+    );
   });
 
   it("ignores channel_join subtypes", async () => {
@@ -3832,6 +4027,7 @@ describe("postMessage", () => {
       botToken: "xoxb-test-token",
       signingSecret: secret,
       logger: mockLogger,
+      botUserId: "U_BOT",
     });
 
     mockClientMethod(
@@ -3864,6 +4060,7 @@ describe("postMessage", () => {
       botToken: "xoxb-test-token",
       signingSecret: secret,
       logger: mockLogger,
+      botUserId: "U_BOT",
     });
 
     mockClientMethod(
@@ -3889,6 +4086,7 @@ describe("postMessage", () => {
       botToken: "xoxb-test-token",
       signingSecret: secret,
       logger: mockLogger,
+      botUserId: "U_BOT",
     });
 
     mockClientMethod(
@@ -8047,6 +8245,7 @@ describe("link unfurl enrichment", () => {
       botToken: "xoxb-test-token",
       signingSecret: secret,
       logger: mockLogger,
+      botUserId: "U_BOT",
     });
     await adapter.initialize(chatInstance);
 
@@ -8078,15 +8277,17 @@ describe("link unfurl enrichment", () => {
     await adapter.handleWebhook(request);
 
     expect(chatInstance.processMessage).not.toHaveBeenCalled();
+    expect(chatInstance.processMessageUpdated).not.toHaveBeenCalled();
   });
 
-  it("should ignore message_changed without unfurl attachments", async () => {
+  it("should ignore hidden message_changed without unfurl attachments", async () => {
     const state = createMockState();
     const chatInstance = createMockChatInstance(state);
     const adapter = createSlackAdapter({
       botToken: "xoxb-test-token",
       signingSecret: secret,
       logger: mockLogger,
+      botUserId: "U_BOT",
     });
     await adapter.initialize(chatInstance);
 
@@ -8112,6 +8313,7 @@ describe("link unfurl enrichment", () => {
     await adapter.handleWebhook(request);
 
     expect(chatInstance.processMessage).not.toHaveBeenCalled();
+    expect(chatInstance.processMessageUpdated).not.toHaveBeenCalled();
   });
 });
 
