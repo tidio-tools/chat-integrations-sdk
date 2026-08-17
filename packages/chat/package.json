@@ -47,6 +47,7 @@
   "scripts": {
     "build": "pnpm clean && tsup && node scripts/check-workflow-serialization-bundle.mjs && cp -r ../../apps/docs/content/docs ./docs",
     "dev": "tsup --watch",
+    "prepare": "rm -rf dist && tsup",
     "test": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
