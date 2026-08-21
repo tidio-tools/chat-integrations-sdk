@@ -1366,6 +1366,7 @@ describe("TeamsAdapter", () => {
     it.each([
       ["check", "2705_whiteheavycheckmark"],
       ["eyes", "1f440_eyes"],
+      ["hourglass", "231b_hourglassdone"],
       ["pin", "1f4cc_pushpin"],
       ["rocket", "launch"],
       ["thinking", "think"],

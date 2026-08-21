@@ -105,6 +105,8 @@ const DEFAULT_DIALOG_OPEN_TIMEOUT_MS = 5000; // Max wait for handler to call ope
 const TEAMS_REACTION_ALIASES: Readonly<Record<string, MessageReactionType>> = {
   check: "2705_whiteheavycheckmark",
   eyes: "1f440_eyes",
+  // Teams has no ⏳ (23f3) reaction; ⌛ is the documented hourglass id.
+  hourglass: "231b_hourglassdone",
   pin: "1f4cc_pushpin",
   rocket: "launch",
   thinking: "think",
