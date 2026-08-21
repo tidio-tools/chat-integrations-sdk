@@ -378,7 +378,7 @@ The `event` object includes:
 | `threadId` | `string` | Thread ID |
 | `userId` | `string` | User who started the thread |
 | `context` | `object` | Assistant context (channelId, teamId, enterpriseId, threadEntryPoint) |
-| `adapter` | `Adapter` | The Slack adapter |
+| `adapter` | `Adapter` | The adapter that received the event |
 
 ### Handling assistant context changes
 
@@ -434,7 +434,7 @@ The `event` object includes:
 | `channelId` | `string` | Channel context |
 | `tab` | `string \| undefined` | The opened tab (`"home"` or `"messages"`). Under `agentView` the event fires for every tab — branch on this to tell a Home-tab open from the DM-open signal |
 | `entities` | `AppContextEntity[] \| undefined` | Folded active-view context (`agentView` only) |
-| `adapter` | `Adapter` | The Slack adapter |
+| `adapter` | `Adapter` | The adapter that received the event |
 
 ### Handling active-view context (Agent messaging)
 
@@ -458,7 +458,7 @@ The `event` object includes:
 | `userId` | `string` | The user whose view changed |
 | `entities` | `AppContextEntity[]` | Relevance-ordered active-view entities; empty when the view is empty |
 | `raw` | `unknown` | Platform-specific raw payload |
-| `adapter` | `Adapter` | The Slack adapter |
+| `adapter` | `Adapter` | The adapter that received the event |
 
 Each `AppContextEntity` is one of: `{ kind: "channel", channelId }`, `{ kind: "canvas", canvasId }`, `{ kind: "list", listId }`, `{ kind: "message", messageTs, channelId }`, or `{ kind: "unknown", type, value }` (all with optional `teamId`/`enterpriseId`).
 
@@ -476,7 +476,7 @@ bot.onDirectMessage((thread, message) => {
 
 ### Handling member joined channel
 
-`onMemberJoinedChannel` fires when a user joins a Slack channel. Use it to post welcome messages or onboard users automatically.
+`onMemberJoinedChannel` fires when a user joins a channel - including the bot itself. Slack sends it for `member_joined_channel`; Teams sends it for `conversationUpdate` members added, which covers the bot being installed in a personal chat, group chat, or team. Use it to post welcome messages or onboard users automatically.
 
 ```typescript title="lib/bot.ts" lineNumbers
 bot.onMemberJoinedChannel(async (event) => {
@@ -496,7 +496,7 @@ The `event` object includes:
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `adapter` | `Adapter` | The Slack adapter |
+| `adapter` | `Adapter` | The adapter that received the event |
 | `channelId` | `string` | The channel that was joined |
 | `userId` | `string` | The user who joined |
 | `inviterId` | `string` (optional) | The user who invited them |
