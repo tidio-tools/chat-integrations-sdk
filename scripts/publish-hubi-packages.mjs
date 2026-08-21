@@ -10,10 +10,16 @@
  *
  * Usage:
  *   pnpm build                                   # dist must exist first
- *   TIDIO_TOOLS_NPM_TOKEN=ghp_... node scripts/publish-hubi-packages.mjs [--dry-run] [suffix]
+ *   TIDIO_TOOLS_NPM_TOKEN=ghp_... node scripts/publish-hubi-packages.mjs [--dry-run] [--tag=<dist-tag>] [suffix]
  *
- * The token needs write:packages for the tidio-tools org. package.json files
- * are restored after publishing - nothing gets committed.
+ * Examples:
+ *   node scripts/publish-hubi-packages.mjs                      # 4.38.0-hubi.0, tag latest
+ *   node scripts/publish-hubi-packages.mjs --tag=beta hubi.1.beta  # 4.38.0-hubi.1.beta, tag beta
+ *
+ * Pre-release builds must use a tag other than `latest` so consumers pinned
+ * to `latest` keep getting the stable -hubi.N build. The token needs
+ * write:packages for the tidio-tools org. package.json files are restored
+ * after publishing - nothing gets committed.
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -30,9 +36,17 @@ const PACKAGES = [
   { dir: 'packages/state-redis', publishedName: '@tidio-tools/chat-adapter-state-redis' },
 ];
 
-const dryRun = process.argv.includes('--dry-run');
-const suffix = process.argv.find((arg) => !arg.startsWith('-') && !arg.includes(path.sep) && /^[a-z]+\.\d+$/.test(arg)) ?? 'hubi.0';
+const args = process.argv.slice(2);
+const dryRun = args.includes('--dry-run');
+const distTag = args.find((arg) => arg.startsWith('--tag='))?.slice('--tag='.length) ?? 'latest';
+const suffix = args.find((arg) => !arg.startsWith('-')) ?? 'hubi.0';
 const token = process.env.TIDIO_TOOLS_NPM_TOKEN;
+
+// Semver pre-release identifiers: dot-separated alphanumerics and hyphens.
+if (!/^[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*$/.test(suffix)) {
+  console.error(`Invalid version suffix "${suffix}" - expected semver pre-release identifiers like hubi.1 or hubi.1.beta.`);
+  process.exit(1);
+}
 
 if (!dryRun && !token) {
   console.error('TIDIO_TOOLS_NPM_TOKEN is required (GitHub PAT with write:packages for tidio-tools).');
@@ -88,8 +102,8 @@ try {
     try {
       console.log(`\n=== Publishing ${publishedName} ${dryRun ? '(dry run)' : ''} ===`);
       // npm treats the -hubi.N suffix as a prerelease and demands an explicit
-      // tag; the fork's convention is that -hubi.N releases ARE latest.
-      execFileSync('npm', ['publish', `--registry=${REGISTRY}`, '--tag=latest', ...(dryRun ? ['--dry-run'] : [])], {
+      // tag; the fork's convention is that plain -hubi.N releases ARE latest.
+      execFileSync('npm', ['publish', `--registry=${REGISTRY}`, `--tag=${distTag}`, ...(dryRun ? ['--dry-run'] : [])], {
         cwd,
         stdio: 'inherit',
         env: process.env,
