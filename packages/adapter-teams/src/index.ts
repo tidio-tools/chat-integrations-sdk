@@ -12,7 +12,9 @@ import type {
   IAdaptiveCardActionInvokeActivity,
   IConversationUpdateActivity,
   IMessageActivity,
+  IMessageDeleteActivity,
   IMessageReactionActivity,
+  IMessageUpdateActivity,
   ITaskFetchInvokeActivity,
   ITaskSubmitInvokeActivity,
   MessageReactionType,
@@ -202,6 +204,16 @@ export class TeamsAdapter implements Adapter<TeamsThreadId, unknown> {
       }
     );
 
+    this.app.on("messageUpdate", async (ctx) => {
+      this.cacheUserContext(ctx.activity);
+      this.handleMessageUpdateFromContext(ctx);
+    });
+
+    this.app.on("messageDelete", async (ctx) => {
+      this.cacheUserContext(ctx.activity);
+      this.handleMessageDeleteFromContext(ctx);
+    });
+
     this.app.on("conversationUpdate", async (ctx) => {
       this.cacheUserContext(ctx.activity);
       this.handleConversationUpdateFromContext(ctx);
@@ -373,30 +385,7 @@ export class TeamsAdapter implements Adapter<TeamsThreadId, unknown> {
     }
 
     const threadId = this.threadIdFromActivity(activity);
-
-    const message = this.parseTeamsMessage(activity, threadId);
-    const user = activity.from?.aadObjectId
-      ? await this.getUserByAadObjectId(
-          message.author.userId,
-          activity.from.aadObjectId
-        )
-      : await this.getUser(message.author.userId);
-    if (user?.email) {
-      message.author.email = user.email;
-    }
-
-    // Detect @mention by checking if any mentioned entity matches our app ID
-    const entities = activity.entities || [];
-    const isMention = entities.some(
-      (e: { type?: string; mentioned?: { id?: string } }) =>
-        e.type === "mention" &&
-        e.mentioned?.id &&
-        (e.mentioned.id === this.app.id ||
-          e.mentioned.id.endsWith(`:${this.app.id}`))
-    );
-    if (isMention) {
-      message.isMention = true;
-    }
+    const message = await this.parseIncomingMessage(activity, threadId);
 
     // For DMs, capture ctx.stream and await processing so the stream stays
     // alive for native streaming via emit(). Group chats use fire-and-forget.
@@ -748,6 +737,118 @@ export class TeamsAdapter implements Adapter<TeamsThreadId, unknown> {
   /**
    * Handle Teams reaction events.
    */
+  /**
+   * Parse an inbound message-shaped activity (new message or edit) into a
+   * Message with the author's email hydrated and @mentions of the bot flagged.
+   */
+  protected async parseIncomingMessage(
+    activity: IMessageActivity | IMessageUpdateActivity,
+    threadId: string
+  ): Promise<Message> {
+    const message = this.parseTeamsMessage(activity, threadId);
+    const user = activity.from?.aadObjectId
+      ? await this.getUserByAadObjectId(
+          message.author.userId,
+          activity.from.aadObjectId
+        )
+      : await this.getUser(message.author.userId);
+    if (user?.email) {
+      message.author.email = user.email;
+    }
+
+    // Detect @mention by checking if any mentioned entity matches our app ID
+    const entities = activity.entities || [];
+    const isMention = entities.some(
+      (e: { type?: string; mentioned?: { id?: string } }) =>
+        e.type === "mention" &&
+        e.mentioned?.id &&
+        this.isSelfAccountId(e.mentioned.id)
+    );
+    if (isMention) {
+      message.isMention = true;
+    }
+
+    return message;
+  }
+
+  /**
+   * Teams sends `messageUpdate` for edits and for undeleting a soft-deleted
+   * message (channelData.eventType: editMessage | undeleteMessage). Both carry
+   * the full replacement message, so both dispatch as message-updated.
+   */
+  protected handleMessageUpdateFromContext(
+    ctx: IActivityContext<IMessageUpdateActivity>
+  ): void {
+    if (!this.chat) {
+      return;
+    }
+
+    const activity = ctx.activity;
+    const threadId = this.threadIdFromActivity(activity);
+
+    this.logger.debug("Processing Teams message update", {
+      eventType: activity.channelData?.eventType,
+      messageId: activity.id,
+      threadId,
+    });
+
+    this.chat.processMessageUpdated(
+      {
+        adapter: this,
+        message: () => this.parseIncomingMessage(activity, threadId),
+        threadId,
+      },
+      this.bridgeAdapter.getWebhookOptions(activity.id)
+    );
+  }
+
+  /**
+   * Teams soft-deletes: `messageDelete` identifies the removed message by the
+   * activity id and carries no body, so `previousMessage` is never available.
+   */
+  protected handleMessageDeleteFromContext(
+    ctx: IActivityContext<IMessageDeleteActivity>
+  ): void {
+    if (!this.chat) {
+      return;
+    }
+
+    const activity = ctx.activity;
+    if (!activity.id) {
+      this.logger.warn("Teams messageDelete without an activity id, ignoring");
+      return;
+    }
+
+    const threadId = this.threadIdFromActivity(activity);
+    const deletedAt = activity.timestamp
+      ? new Date(activity.timestamp)
+      : undefined;
+
+    this.logger.debug("Processing Teams message delete", {
+      messageId: activity.id,
+      threadId,
+    });
+
+    // Platform-native channel id, like Slack's `event.channel`: the bare
+    // conversation id without the `;messageid=` thread suffix.
+    const channelId = (activity.conversation?.id ?? "").replace(
+      MESSAGEID_STRIP_PATTERN,
+      ""
+    );
+
+    this.chat.processMessageDeleted(
+      {
+        adapter: this,
+        channelId,
+        deletedAt,
+        messageId: activity.id,
+        raw: activity,
+        threadId,
+      },
+      this.bridgeAdapter.getWebhookOptions(activity.id)
+    );
+  }
+
   /**
    * Dispatch `conversationUpdate` membersAdded as member-joined-channel events.
    *

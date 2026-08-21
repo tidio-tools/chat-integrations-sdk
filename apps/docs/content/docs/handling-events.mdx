@@ -291,7 +291,7 @@ bot.onReaction(["bookmark"], async (event) => {
 
 ## Handling edits and deletes
 
-`onMessageUpdated` fires when a user edits a message, and `onMessageDeleted` when one is removed. Both are lifecycle events: they never route through `onNewMessage`, `onNewMention`, or `onSubscribedMessage`, and the concurrency strategies do not apply to them.
+`onMessageUpdated` fires when a user edits a message, and `onMessageDeleted` when one is removed. Both are lifecycle events: they never route through `onNewMessage`, `onNewMention`, or `onSubscribedMessage`, and the concurrency strategies do not apply to them. Slack sends them for `message_changed` / `message_deleted`; Teams for `messageUpdate` (edits and undeletes) / `messageDelete` (soft deletes, which carry no `previousMessage`).
 
 ```typescript title="lib/bot.ts" lineNumbers
 bot.onMessageUpdated(async (thread, message, previousMessage) => {

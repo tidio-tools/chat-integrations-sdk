@@ -1890,3 +1890,121 @@ describe("conversationUpdate", () => {
     expect(chat.processMemberJoinedChannel).not.toHaveBeenCalled();
   });
 });
+
+describe("message edits and deletes", () => {
+  class LifecycleTestAdapter extends TeamsAdapter {
+    handleUpdate(activity: Record<string, unknown>) {
+      return this.handleMessageUpdateFromContext({ activity } as never);
+    }
+
+    handleDelete(activity: Record<string, unknown>) {
+      return this.handleMessageDeleteFromContext({ activity } as never);
+    }
+  }
+
+  const baseActivity = {
+    id: "1700000000123",
+    from: { id: "29:alice", name: "Alice" },
+    recipient: { id: "28:test", name: "Bot" },
+    conversation: {
+      id: "19:abc@thread.tacv2;messageid=1700000000000",
+      conversationType: "channel",
+    },
+    serviceUrl: TEST_SERVICE_URL,
+    timestamp: "2026-08-17T10:00:00.000Z",
+  };
+
+  const setup = async () => {
+    const adapter = new LifecycleTestAdapter({
+      appId: "test",
+      appPassword: "test",
+      logger,
+    });
+    const chat = createMockChatInstance();
+    const mockApp = (
+      adapter as unknown as {
+        app: {
+          initialize: ReturnType<typeof vi.fn>;
+          graph: { call: ReturnType<typeof vi.fn> };
+        };
+      }
+    ).app;
+    mockApp.initialize = vi.fn(async () => undefined);
+    mockApp.graph = { call: vi.fn(async () => null) };
+    await adapter.initialize(chat);
+    return { adapter, chat };
+  };
+
+  it("dispatches an edit as a message-updated event with the replacement message", async () => {
+    const { adapter, chat } = await setup();
+
+    adapter.handleUpdate({
+      ...baseActivity,
+      type: "messageUpdate",
+      text: "Edited text",
+      channelData: { eventType: "editMessage" },
+    });
+
+    expect(chat.processMessageUpdated).toHaveBeenCalledTimes(1);
+    const [event] = vi.mocked(chat.processMessageUpdated).mock.calls[0];
+    expect(event.adapter).toBe(adapter);
+    expect(adapter.decodeThreadId(event.threadId).conversationId).toBe(
+      "19:abc@thread.tacv2;messageid=1700000000000"
+    );
+    const message =
+      typeof event.message === "function"
+        ? await event.message()
+        : event.message;
+    expect(message.id).toBe("1700000000123");
+    expect(message.text).toBe("Edited text");
+  });
+
+  it("dispatches an undelete as a message-updated event too", async () => {
+    const { adapter, chat } = await setup();
+
+    adapter.handleUpdate({
+      ...baseActivity,
+      type: "messageUpdate",
+      text: "Restored text",
+      channelData: { eventType: "undeleteMessage" },
+    });
+
+    expect(chat.processMessageUpdated).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispatches a soft delete as a message-deleted event keyed by the activity id", async () => {
+    const { adapter, chat } = await setup();
+
+    adapter.handleDelete({
+      ...baseActivity,
+      type: "messageDelete",
+      channelData: { eventType: "softDeleteMessage" },
+    });
+
+    expect(chat.processMessageDeleted).toHaveBeenCalledTimes(1);
+    const [event] = vi.mocked(chat.processMessageDeleted).mock.calls[0];
+    expect(event).toMatchObject({
+      adapter,
+      channelId: "19:abc@thread.tacv2",
+      messageId: "1700000000123",
+      deletedAt: new Date("2026-08-17T10:00:00.000Z"),
+      raw: expect.objectContaining({ type: "messageDelete" }),
+    });
+    expect(adapter.decodeThreadId(event.threadId).conversationId).toBe(
+      "19:abc@thread.tacv2;messageid=1700000000000"
+    );
+  });
+
+  it("ignores deletes without an activity id", async () => {
+    const { adapter, chat } = await setup();
+
+    adapter.handleDelete({
+      ...baseActivity,
+      id: undefined,
+      type: "messageDelete",
+      channelData: { eventType: "softDeleteMessage" },
+    });
+
+    expect(chat.processMessageDeleted).not.toHaveBeenCalled();
+  });
+});
