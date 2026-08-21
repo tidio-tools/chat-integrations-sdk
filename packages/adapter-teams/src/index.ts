@@ -790,6 +790,7 @@ export class TeamsAdapter implements Adapter<TeamsThreadId, unknown> {
           userId: member.id,
           // A user joining on their own shows up as their own `from`.
           ...(inviterId && inviterId !== member.id ? { inviterId } : {}),
+          raw: activity,
         },
         options
       );

@@ -1841,6 +1841,7 @@ describe("conversationUpdate", () => {
       adapter,
       userId: "29:alice",
       inviterId: "29:inviter",
+      raw: expect.objectContaining({ type: "conversationUpdate" }),
     });
     expect(adapter.decodeThreadId(firstEvent.channelId).conversationId).toBe(
       "19:abc@thread.tacv2"

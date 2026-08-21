@@ -3338,6 +3338,7 @@ export class SlackAdapter implements Adapter<SlackThreadId, unknown> {
           threadTs: "",
         }),
         inviterId: event.inviter,
+        raw: event,
         adapter: this,
       },
       options
