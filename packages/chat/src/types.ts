@@ -2633,6 +2633,12 @@ export interface MemberJoinedChannelEvent {
   adapter: Adapter;
   channelId: string;
   inviterId?: string;
+  /**
+   * Platform payload that produced the event (Slack `member_joined_channel`
+   * event, Teams `conversationUpdate` activity) for adapter-specific details
+   * such as the Teams tenant id.
+   */
+  raw?: unknown;
   userId: string;
 }
 

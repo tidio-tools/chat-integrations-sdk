@@ -10,6 +10,7 @@ import type {
   Account,
   Activity,
   IAdaptiveCardActionInvokeActivity,
+  IConversationUpdateActivity,
   IMessageActivity,
   IMessageReactionActivity,
   ITaskFetchInvokeActivity,
@@ -104,6 +105,8 @@ const DEFAULT_DIALOG_OPEN_TIMEOUT_MS = 5000; // Max wait for handler to call ope
 const TEAMS_REACTION_ALIASES: Readonly<Record<string, MessageReactionType>> = {
   check: "2705_whiteheavycheckmark",
   eyes: "1f440_eyes",
+  // Teams has no ⏳ (23f3) reaction; ⌛ is the documented hourglass id.
+  hourglass: "231b_hourglassdone",
   pin: "1f4cc_pushpin",
   rocket: "launch",
   thinking: "think",
@@ -121,7 +124,6 @@ function resolveTeamsReactionType(
 export class TeamsAdapter implements Adapter<TeamsThreadId, unknown> {
   readonly name = "teams";
   readonly userName: string;
-  readonly botUserId?: string;
 
   protected readonly app: App;
   protected readonly bridgeAdapter: BridgeHttpAdapter;
@@ -202,6 +204,7 @@ export class TeamsAdapter implements Adapter<TeamsThreadId, unknown> {
 
     this.app.on("conversationUpdate", async (ctx) => {
       this.cacheUserContext(ctx.activity);
+      this.handleConversationUpdateFromContext(ctx);
     });
 
     this.app.on("installationUpdate", async (ctx) => {
@@ -745,6 +748,57 @@ export class TeamsAdapter implements Adapter<TeamsThreadId, unknown> {
   /**
    * Handle Teams reaction events.
    */
+  /**
+   * Dispatch `conversationUpdate` membersAdded as member-joined-channel events.
+   *
+   * Teams sends this activity when users join a team or group chat and when
+   * the bot itself is added - in personal, group chat, and team scope alike.
+   * The bot-added case is the documented trigger for welcome messages; apps
+   * detect it by comparing `event.userId` with `adapter.botUserId`.
+   *
+   * `installationUpdate` is deliberately not mapped: Teams fires it alongside
+   * this activity on install, so mapping both would double-dispatch.
+   */
+  protected handleConversationUpdateFromContext(
+    ctx: IActivityContext<IConversationUpdateActivity>
+  ): void {
+    if (!this.chat) {
+      return;
+    }
+
+    const activity = ctx.activity;
+    const membersAdded = (activity.membersAdded ?? []).filter(
+      (member): member is Account & { id: string } => Boolean(member.id)
+    );
+    if (membersAdded.length === 0) {
+      return;
+    }
+
+    const channelId = this.threadIdFromActivity(activity);
+    const inviterId = activity.from?.id;
+    const options = this.bridgeAdapter.getWebhookOptions(activity.id);
+
+    for (const member of membersAdded) {
+      this.logger.debug("Processing Teams member added", {
+        channelId,
+        userId: member.id,
+        isSelf: this.isSelfAccountId(member.id),
+      });
+
+      this.chat.processMemberJoinedChannel(
+        {
+          adapter: this,
+          channelId,
+          userId: member.id,
+          // A user joining on their own shows up as their own `from`.
+          ...(inviterId && inviterId !== member.id ? { inviterId } : {}),
+          raw: activity,
+        },
+        options
+      );
+    }
+  }
+
   protected handleReactionFromContext(
     ctx: IActivityContext<IMessageReactionActivity>
   ): void {
@@ -1721,21 +1775,25 @@ export class TeamsAdapter implements Adapter<TeamsThreadId, unknown> {
     return this.parseTeamsMessage(activity, threadId);
   }
 
+  /**
+   * The bot's account id as it appears in Teams activities (`28:<app id>`),
+   * so apps can compare member and author ids against it.
+   */
+  get botUserId(): string | undefined {
+    return this.app.id ? `28:${this.app.id}` : undefined;
+  }
+
   protected isMessageFromSelf(activity: Activity): boolean {
     const fromId = activity.from?.id;
-    if (!(fromId && this.app.id)) {
+    return fromId ? this.isSelfAccountId(fromId) : false;
+  }
+
+  /** Teams addresses the bot either by bare app id or as `28:<app id>`. */
+  protected isSelfAccountId(accountId: string): boolean {
+    if (!this.app.id) {
       return false;
     }
-
-    if (fromId === this.app.id) {
-      return true;
-    }
-
-    if (fromId.endsWith(`:${this.app.id}`)) {
-      return true;
-    }
-
-    return false;
+    return accountId === this.app.id || accountId.endsWith(`:${this.app.id}`);
   }
 
   renderFormatted(content: FormattedContent): string {

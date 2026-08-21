@@ -1366,6 +1366,7 @@ describe("TeamsAdapter", () => {
     it.each([
       ["check", "2705_whiteheavycheckmark"],
       ["eyes", "1f440_eyes"],
+      ["hourglass", "231b_hourglassdone"],
       ["pin", "1f4cc_pushpin"],
       ["rocket", "launch"],
       ["thinking", "think"],
@@ -1779,5 +1780,113 @@ describe("subclass extensibility", () => {
       }
     }
     expect(TestSubclass.prototype.checkAccess).toBeInstanceOf(Function);
+  });
+});
+
+describe("conversationUpdate", () => {
+  class ConversationUpdateTestAdapter extends TeamsAdapter {
+    handleConversationUpdate(activity: Record<string, unknown>) {
+      return this.handleConversationUpdateFromContext({ activity } as never);
+    }
+  }
+
+  const conversationUpdate = (
+    overrides: Record<string, unknown> = {}
+  ): Record<string, unknown> => ({
+    type: "conversationUpdate",
+    id: "update-1",
+    from: { id: "29:inviter", name: "Inviter" },
+    recipient: { id: "28:test", name: "Bot" },
+    conversation: { id: "19:abc@thread.tacv2", conversationType: "channel" },
+    serviceUrl: TEST_SERVICE_URL,
+    channelData: { eventType: "teamMemberAdded" },
+    ...overrides,
+  });
+
+  const setup = async () => {
+    const adapter = new ConversationUpdateTestAdapter({
+      appId: "test",
+      appPassword: "test",
+      logger,
+    });
+    const chat = createMockChatInstance();
+    (
+      adapter as unknown as { app: { initialize: ReturnType<typeof vi.fn> } }
+    ).app.initialize = vi.fn(async () => undefined);
+    await adapter.initialize(chat);
+    return { adapter, chat };
+  };
+
+  it("exposes the bot account id in Teams form", async () => {
+    const { adapter } = await setup();
+
+    expect(adapter.botUserId).toBe("28:test");
+  });
+
+  it("dispatches a member-joined-channel event for every added member", async () => {
+    const { adapter, chat } = await setup();
+
+    adapter.handleConversationUpdate(
+      conversationUpdate({
+        membersAdded: [
+          { id: "29:alice", name: "Alice" },
+          { id: "29:bob", name: "Bob" },
+        ],
+      })
+    );
+
+    expect(chat.processMemberJoinedChannel).toHaveBeenCalledTimes(2);
+    const [firstEvent] = vi.mocked(chat.processMemberJoinedChannel).mock
+      .calls[0];
+    expect(firstEvent).toMatchObject({
+      adapter,
+      userId: "29:alice",
+      inviterId: "29:inviter",
+      raw: expect.objectContaining({ type: "conversationUpdate" }),
+    });
+    expect(adapter.decodeThreadId(firstEvent.channelId).conversationId).toBe(
+      "19:abc@thread.tacv2"
+    );
+  });
+
+  it("reports the bot itself being added under botUserId", async () => {
+    const { adapter, chat } = await setup();
+
+    adapter.handleConversationUpdate(
+      conversationUpdate({ membersAdded: [{ id: "28:test", name: "Bot" }] })
+    );
+
+    const [event] = vi.mocked(chat.processMemberJoinedChannel).mock.calls[0];
+    expect(event.userId).toBe(adapter.botUserId);
+  });
+
+  it("omits inviterId when a member added themselves", async () => {
+    const { adapter, chat } = await setup();
+
+    adapter.handleConversationUpdate(
+      conversationUpdate({
+        from: { id: "29:alice", name: "Alice" },
+        membersAdded: [{ id: "29:alice", name: "Alice" }],
+      })
+    );
+
+    const [event] = vi.mocked(chat.processMemberJoinedChannel).mock.calls[0];
+    expect(event.inviterId).toBeUndefined();
+  });
+
+  it("ignores conversation updates without added members", async () => {
+    const { adapter, chat } = await setup();
+
+    adapter.handleConversationUpdate(
+      conversationUpdate({
+        channelData: { eventType: "channelRenamed" },
+        topicName: "New name",
+      })
+    );
+    adapter.handleConversationUpdate(
+      conversationUpdate({ membersRemoved: [{ id: "29:alice" }] })
+    );
+
+    expect(chat.processMemberJoinedChannel).not.toHaveBeenCalled();
   });
 });
